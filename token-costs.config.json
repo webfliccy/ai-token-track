@@ -1,0 +1,54 @@
+{
+  "$comment": "Config for scripts/token-cost/token-cost.mjs. All costs are estimates unless a commit carries a Token-Usage trailer — see docs/token-cost-tracking.md for what the numbers are based on and how to calibrate them.",
+
+  "defaultModel": "claude-sonnet-5",
+
+  "billingMode": "api",
+  "$billingMode": "api = multiply tokens by per-MTok prices below. subscription = flat-rate plan (Claude Pro/Max, ChatGPT Plus, etc.); tokens are still tracked but cost is reported as 0 with the plan name shown.",
+  "subscriptionPlanName": "",
+
+  "models": {
+    "claude-fable-5":    { "inputPerMTok": 10.0, "outputPerMTok": 50.0 },
+    "claude-opus-4-8":   { "inputPerMTok": 5.0,  "outputPerMTok": 25.0 },
+    "claude-opus-4-7":   { "inputPerMTok": 5.0,  "outputPerMTok": 25.0 },
+    "claude-opus-4-6":   { "inputPerMTok": 5.0,  "outputPerMTok": 25.0 },
+    "claude-sonnet-5":   { "inputPerMTok": 3.0,  "outputPerMTok": 15.0, "$note": "intro pricing $2/$10 through 2026-08-31" },
+    "claude-sonnet-4-6": { "inputPerMTok": 3.0,  "outputPerMTok": 15.0 },
+    "claude-haiku-4-5":  { "inputPerMTok": 1.0,  "outputPerMTok": 5.0 },
+
+    "gpt-5.2":       { "inputPerMTok": 1.25, "outputPerMTok": 10.0, "$note": "EXAMPLE — verify at openai.com/api/pricing before relying on this" },
+    "gpt-5.2-mini":  { "inputPerMTok": 0.25, "outputPerMTok": 2.0,  "$note": "EXAMPLE — verify at openai.com/api/pricing" },
+    "gemini-3-pro":  { "inputPerMTok": 2.0,  "outputPerMTok": 12.0, "$note": "EXAMPLE — verify at ai.google.dev/pricing" }
+  },
+  "$models": "Per-MTok USD prices. Claude prices verified 2026-07 from Anthropic docs. Non-Anthropic entries are placeholders — update them from the provider's pricing page. Add any model your team uses; the key must match the model name used in Token-Usage trailers.",
+
+  "cache": {
+    "readMultiplier": 0.1,
+    "writeMultiplier": 1.25,
+    "$comment": "Cache-read tokens are billed at ~0.1x the input rate, cache writes at ~1.25x (5-min TTL; 1h TTL is 2x). Applied per model when computing cost from captured session usage."
+  },
+
+  "capture": {
+    "claudeProjectsDir": "~/.claude/projects",
+    "promptForPreviousSessions": true,
+    "staleAfterMinutes": 60,
+    "$comment": "Where Claude Code writes session transcripts. `record` reads the per-response usage from this project's transcript files (a purely local read — costs nothing) and attaches it to the commit as a git note on refs/notes/token-usage. The session currently active (or active within staleAfterMinutes) is attributed to the commit automatically; for any other session in the capture window you are asked whether it was related to this work (default Y; declined usage is dropped, not deferred). Prompts need a terminal — in CI/GUI clients everything is included, as before. Set promptForPreviousSessions to false to never ask. For other AI tools, use `capture --input N --output N --model X` instead."
+  },
+
+  "estimation": {
+    "charsPerLine": 45,
+    "charsPerToken": 3.5,
+    "inputMultiplier": 20,
+    "$comment": "Used only when a commit has no Token-Usage trailer. outputTokens = addedLines * charsPerLine / charsPerToken. inputTokens = outputTokens * inputMultiplier (coding agents read far more context than they write). Calibrate: compare a week of estimates against real usage from `/cost` in Claude Code or your provider's usage dashboard, then adjust these three numbers."
+  },
+
+  "excludePaths": [
+    "package-lock\\.json$",
+    "pnpm-lock\\.yaml$",
+    "yarn\\.lock$",
+    "\\.(svg|png|jpe?g|gif|woff2?)$",
+    "^node_modules/",
+    "^public/uploads/"
+  ],
+  "$excludePaths": "Regex list. Diff lines in matching files are ignored by the estimator (lockfiles and assets are not written token-by-token by a model)."
+}

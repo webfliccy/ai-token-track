@@ -1,0 +1,60 @@
+name: Token cost report
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history — the report is derived from git log
+
+      - name: Fetch captured usage notes
+        # Exact per-commit usage lives on this notes ref (pushed by developers
+        # via `git push origin refs/notes/token-usage`). Without it the report
+        # falls back to diff-size estimates.
+        run: git fetch origin +refs/notes/token-usage:refs/notes/token-usage || true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Generate report
+        run: |
+          {
+            echo "## AI token & cost by feature"
+            echo
+            node scripts/token-cost/token-cost.mjs report --md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # On PRs, also post/update a sticky comment with the spend for just this branch.
+      - name: PR comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { execSync } = require('child_process');
+            const base = context.payload.pull_request.base.sha;
+            const body = [
+              '<!-- token-cost-report -->',
+              '### AI token & cost for this PR',
+              '',
+              execSync(`node scripts/token-cost/token-cost.mjs report --md --since ${base}`).toString(),
+            ].join('\n');
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo, issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body.includes('<!-- token-cost-report -->'));
+            if (existing) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
+            }
