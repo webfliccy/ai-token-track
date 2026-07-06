@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * token-cost.mjs — per-feature AI token/cost tracking derived from git history,
- * with optional exact capture of real session usage at commit time.
+ * based on exact capture of real session usage at commit time.
  *
  * Zero dependencies, zero network calls, zero LLM calls: running this script
  * never spends tokens. Reading local transcript files that your AI tool already
@@ -19,7 +19,7 @@
  *        Token-Usage: input=182000 output=9400 model=claude-sonnet-5
  *   2. Git note on refs/notes/token-usage (written by `record`/`capture` from
  *      real session transcripts — per-model, includes cache tokens)
- *   3. Heuristic estimate from diff size (see "estimation" in config)
+ * Commits with neither are not counted — only real, recorded usage is reported.
  *
  * Cost is computed PER MODEL:
  *   cost = (input + cacheWrite×writeMult + cacheRead×readMult)/1M × inputPerMTok
@@ -65,7 +65,6 @@ function loadConfig() {
     process.exit(1);
   }
   const cfg = JSON.parse(readFileSync(path, "utf8"));
-  cfg._exclude = (cfg.excludePaths ?? []).map((p) => new RegExp(p));
   cfg.cache = { readMultiplier: 0.1, writeMultiplier: 1.25, ...cfg.cache };
   cfg.capture = { claudeProjectsDir: "~/.claude/projects", ...cfg.capture };
   return cfg;
@@ -81,7 +80,6 @@ function git(args, opts = {}) {
 
 const NUL = "\x00";
 
-/** Parse `git log --numstat` into [{hash, subject, body, note, files:[{add,del,path}]}] */
 function notesRefExists() {
   try {
     git(["show-ref", "--verify", "--quiet", `refs/notes/${NOTES_REF}`], { stdio: ["ignore", "ignore", "ignore"] });
@@ -91,12 +89,13 @@ function notesRefExists() {
   }
 }
 
+/** Parse `git log` into [{hash, subject, body, note}] */
 function readCommits(range) {
   // %x00 produces NUL bytes in git's *output* (safe separators — they can't
   // appear in commit messages or notes); the format string itself stays ASCII.
   // Only ask for notes once the ref exists — git warns loudly otherwise.
   const args = [
-    "log", "--numstat", "--no-merges",
+    "log", "--no-merges",
     ...(notesRefExists() ? [`--notes=${NOTES_REF}`] : ["--no-notes"]),
     "--format=%x00COMMIT%x00%H%x00%s%x00%b%x00%N%x00END%x00",
   ];
@@ -108,13 +107,7 @@ function readCommits(range) {
     const endIdx = chunk.indexOf(`${NUL}END${NUL}`);
     if (endIdx === -1) continue;
     const [hash, subject, body, note] = chunk.slice(0, endIdx).split(NUL);
-    const files = [];
-    for (const line of chunk.slice(endIdx + 5).split("\n")) {
-      const m = line.match(/^(\d+|-)\t(\d+|-)\t(.+)$/);
-      if (!m) continue;
-      files.push({ add: m[1] === "-" ? 0 : +m[1], del: m[2] === "-" ? 0 : +m[2], path: m[3] });
-    }
-    commits.push({ hash, subject, body: body ?? "", note: (note ?? "").trim(), files });
+    commits.push({ hash, subject, body: body ?? "", note: (note ?? "").trim() });
   }
   return commits;
 }
@@ -131,7 +124,7 @@ function featureKeys(commit) {
 }
 
 // ---------- token accounting ----------
-// A usage record is { models: { <model>: {input, output, cacheRead, cacheWrite} }, exact: bool }
+// A usage record is { models: { <model>: {input, output, cacheRead, cacheWrite} } }
 
 const emptyModelUsage = () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
 
@@ -141,7 +134,7 @@ function parseTrailer(commit, cfg) {
   );
   if (!m) return null;
   const model = m[3] ?? cfg.defaultModel;
-  return { models: { [model]: { ...emptyModelUsage(), input: +m[1], output: +m[2] } }, exact: true };
+  return { models: { [model]: { ...emptyModelUsage(), input: +m[1], output: +m[2] } } };
 }
 
 function parseNote(commit) {
@@ -153,28 +146,14 @@ function parseNote(commit) {
     for (const [model, u] of Object.entries(data.models)) {
       models[model] = { ...emptyModelUsage(), ...u };
     }
-    return { models, exact: true };
+    return { models };
   } catch {
     return null; // unrelated note on this ref — ignore
   }
 }
 
-function estimateTokens(commit, cfg) {
-  const { charsPerLine, charsPerToken, inputMultiplier } = cfg.estimation;
-  let lines = 0;
-  for (const f of commit.files) {
-    if (cfg._exclude.some((re) => re.test(f.path))) continue;
-    lines += f.add;
-  }
-  const output = Math.round((lines * charsPerLine) / charsPerToken);
-  return {
-    models: { [cfg.defaultModel]: { ...emptyModelUsage(), input: output * inputMultiplier, output } },
-    exact: false,
-  };
-}
-
-const usageForCommit = (commit, cfg) =>
-  parseTrailer(commit, cfg) ?? parseNote(commit) ?? estimateTokens(commit, cfg);
+/** Real usage only (trailer or captured note); null means the commit is not counted. */
+const usageForCommit = (commit, cfg) => parseTrailer(commit, cfg) ?? parseNote(commit);
 
 /** Cost of one model's usage; null if the model has no price entry. Always
  *  priced at API rates — in subscription mode this is the API-equivalent
@@ -334,15 +313,15 @@ function aggregate(commits, cfg) {
   const features = new Map();
   for (const c of commits) {
     const usage = usageForCommit(c, cfg);
+    if (!usage) continue; // no recorded usage — not counted
     const keys = featureKeys(c);
     const share = 1 / keys.length;
     for (const key of keys) {
       const f = features.get(key) ?? {
         key, commits: 0, input: 0, output: 0, cost: 0,
-        exactCommits: 0, unknownModelCost: false, models: new Set(),
+        unknownModelCost: false, models: new Set(),
       };
       f.commits += 1;
-      if (usage.exact) f.exactCommits += 1;
       for (const [model, u] of Object.entries(usage.models)) {
         f.models.add(model);
         f.input += (u.input + u.cacheRead + u.cacheWrite) * share;
@@ -369,14 +348,13 @@ function renderTable(rows, cfg, md = false) {
     { input: 0, output: 0, cost: 0, commits: 0 }
   );
   const cost = (r) => fmtUsd(r.cost) + (r.unknownModelCost ? "+?" : "");
-  const basis = (r) => (r.exactCommits === r.commits ? "exact" : r.exactCommits > 0 ? "mixed" : "estimate");
-  const header = ["Feature", "Commits", "Input tok", "Output tok", "Cost", "Models", "Basis"];
+  const header = ["Feature", "Commits", "Input tok", "Output tok", "Cost", "Models"];
   const body = rows.map((r) => [
     r.key, `${r.commits}`, fmtTok(r.input), fmtTok(r.output), cost(r),
-    [...r.models].map(shortModel).join(", "), basis(r),
+    [...r.models].map(shortModel).join(", "),
   ]);
   body.push(["TOTAL", `${total.commits}`, fmtTok(total.input), fmtTok(total.output),
-    fmtUsd(total.cost), "", ""]);
+    fmtUsd(total.cost), ""]);
   const subNote =
     cfg.billingMode === "subscription"
       ? `Costs are API-equivalent; actual billing is a flat-rate subscription${cfg.subscriptionPlanName ? ` (${cfg.subscriptionPlanName})` : ""} — marginal cost $0.`
@@ -386,7 +364,7 @@ function renderTable(rows, cfg, md = false) {
     const lines = [`| ${header.join(" | ")} |`, `|${header.map(() => "---").join("|")}|`];
     for (const row of body) lines.push(`| ${row.join(" | ")} |`);
     if (subNote) lines.push("", `_${subNote}_`);
-    lines.push("", `_Input tok includes cache reads/writes; cost prices them at ${cfg.cache.readMultiplier}× / ${cfg.cache.writeMultiplier}× input rate. "estimate" rows are diff-size heuristics (model assumed \`${cfg.defaultModel}\`), not measured usage — see docs/token-cost-tracking.md._`);
+    lines.push("", `_Real recorded usage only — commits without a Token-Usage trailer or captured git note are not counted. Input tok includes cache reads/writes; cost prices them at ${cfg.cache.readMultiplier}× / ${cfg.cache.writeMultiplier}× input rate._`);
     return lines.join("\n");
   }
   const widths = header.map((h, i) => Math.max(h.length, ...body.map((r) => r[i].length)));
@@ -403,7 +381,7 @@ function printCommitSummary(head, usage, cfg) {
     return `${shortModel(model)}: in=${fmtTok(u.input + u.cacheRead + u.cacheWrite)} out=${fmtTok(u.output)} ${costStr}`;
   });
   const keys = featureKeys(head);
-  console.log(`[token-cost] ${head.hash.slice(0, 7)} → ${keys.join(", ")} (${usage.exact ? "exact" : "estimated"})`);
+  console.log(`[token-cost] ${head.hash.slice(0, 7)} → ${keys.join(", ")}`);
   for (const p of parts) console.log(`[token-cost]   ${p}`);
   const all = aggregate(readCommits(), cfg);
   for (const key of keys) {
@@ -460,11 +438,16 @@ if (cmd === "report") {
       writeNote(head.hash, perModel, "claude-code-transcripts");
       head.note = JSON.stringify({ models: perModel }); // so the summary below reads the fresh note
     } else if (!found) {
-      console.log(`[token-cost] no transcript dir at ${transcriptDir} — falling back to diff estimate`);
+      console.log(`[token-cost] no transcript dir at ${transcriptDir} — no usage recorded for this commit`);
     }
   }
 
-  printCommitSummary(head, usageForCommit(head, cfg), cfg);
+  const usage = usageForCommit(head, cfg);
+  if (usage) {
+    printCommitSummary(head, usage, cfg);
+  } else {
+    console.log(`[token-cost] ${head.hash.slice(0, 7)} has no recorded usage — it will not be counted (use \`capture\` or a Token-Usage trailer to add it)`);
+  }
 } else if (cmd === "capture") {
   // Manual exact entry for HEAD (any AI tool): capture --input N --output N [--model X]
   //   [--cache-read N] [--cache-write N] [--commit <hash>]

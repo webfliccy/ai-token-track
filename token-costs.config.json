@@ -1,5 +1,5 @@
 {
-  "$comment": "Config for scripts/token-cost/token-cost.mjs. All costs are estimates unless a commit carries a Token-Usage trailer — see docs/token-cost-tracking.md for what the numbers are based on and how to calibrate them.",
+  "$comment": "Config for scripts/token-cost/token-cost.mjs. Only real recorded usage is counted — a commit needs a Token-Usage trailer or a captured git note (refs/notes/token-usage) to appear in the report.",
 
   "defaultModel": "claude-sonnet-5",
 
@@ -33,22 +33,5 @@
     "promptForPreviousSessions": true,
     "staleAfterMinutes": 60,
     "$comment": "Where Claude Code writes session transcripts. `record` reads the per-response usage from this project's transcript files (a purely local read — costs nothing) and attaches it to the commit as a git note on refs/notes/token-usage. The session currently active (or active within staleAfterMinutes) is attributed to the commit automatically; for any other session in the capture window you are asked whether it was related to this work (default Y; declined usage is dropped, not deferred). Prompts need a terminal — in CI/GUI clients everything is included, as before. Set promptForPreviousSessions to false to never ask. For other AI tools, use `capture --input N --output N --model X` instead."
-  },
-
-  "estimation": {
-    "charsPerLine": 45,
-    "charsPerToken": 3.5,
-    "inputMultiplier": 20,
-    "$comment": "Used only when a commit has no Token-Usage trailer. outputTokens = addedLines * charsPerLine / charsPerToken. inputTokens = outputTokens * inputMultiplier (coding agents read far more context than they write). Calibrate: compare a week of estimates against real usage from `/cost` in Claude Code or your provider's usage dashboard, then adjust these three numbers."
-  },
-
-  "excludePaths": [
-    "package-lock\\.json$",
-    "pnpm-lock\\.yaml$",
-    "yarn\\.lock$",
-    "\\.(svg|png|jpe?g|gif|woff2?)$",
-    "^node_modules/",
-    "^public/uploads/"
-  ],
-  "$excludePaths": "Regex list. Diff lines in matching files are ignored by the estimator (lockfiles and assets are not written token-by-token by a model)."
+  }
 }

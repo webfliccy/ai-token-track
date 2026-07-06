@@ -18,9 +18,9 @@ jobs:
           fetch-depth: 0 # full history — the report is derived from git log
 
       - name: Fetch captured usage notes
-        # Exact per-commit usage lives on this notes ref (pushed by developers
-        # via `git push origin refs/notes/token-usage`). Without it the report
-        # falls back to diff-size estimates.
+        # Per-commit usage lives on this notes ref (pushed by developers via
+        # `git push origin refs/notes/token-usage`). Commits without a note or
+        # Token-Usage trailer are not counted in the report.
         run: git fetch origin +refs/notes/token-usage:refs/notes/token-usage || true
 
       - uses: actions/setup-node@v4
