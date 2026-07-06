@@ -20,7 +20,17 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(scriptDir, "..", "..");
+// Same cwd-based resolution as token-cost.mjs: when vendored as a submodule
+// behind a symlink, the script's real path is inside the submodule, so the
+// repo being measured must come from the working directory instead.
+function resolveRepoRoot() {
+  try {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
+  } catch {
+    return resolve(scriptDir, "..", "..");
+  }
+}
+const repoRoot = resolveRepoRoot();
 
 const COST_FIELD = "AI Cost (USD)";
 const TOKENS_FIELD = "AI Tokens (out)";

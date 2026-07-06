@@ -42,7 +42,18 @@ import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(scriptDir, "..", "..");
+// Root of the repo being measured: the one the command runs in, not the one
+// the script file lives in — they differ when this repo is vendored as a
+// submodule and reached through a symlink (Node resolves symlinks when
+// loading ES modules, so script-relative paths would point at the submodule).
+function resolveRepoRoot() {
+  try {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
+  } catch {
+    return resolve(scriptDir, "..", "..");
+  }
+}
+const repoRoot = resolveRepoRoot();
 const NOTES_REF = "token-usage";
 
 // ---------- config ----------
