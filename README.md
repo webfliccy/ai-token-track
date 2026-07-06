@@ -88,10 +88,25 @@ Not modelled: batch-API discounts (50%), 1-hour-TTL cache writes (2× rather tha
 
 ## Setup in your repository
 
-1. **Copy the files** into the same relative paths:
+1. **Get the files into place** — two ways:
+
+   **Option A — copy** (no ongoing link to this repo):
    - `scripts/token-cost/token-cost.mjs`
    - `token-costs.config.json` (repo root)
    - `.github/workflows/token-cost.yml` (optional, for GitHub integration)
+
+   **Option B — submodule** (updates arrive via `git submodule update --remote`):
+   ```sh
+   git submodule add https://github.com/webfliccy/ai-token-track.git vendor/ai-token-track
+   ln -s ../vendor/ai-token-track/scripts/token-cost scripts/token-cost
+   cp vendor/ai-token-track/token-costs.config.json .
+   cp vendor/ai-token-track/.github/workflows/token-cost.yml .github/workflows/   # optional
+   ```
+   Notes on this layout:
+   - The scripts resolve the repo they measure from the **working directory** (`git rev-parse --show-toplevel`), so running them through the symlink measures *your* repo, not the submodule.
+   - The config is a deliberate **copy**, not a symlink — it holds per-repo choices (prices, `defaultModel`, `excludePaths`) that shouldn't change when the submodule updates.
+   - If you use the GitHub workflow, add `submodules: true` to its `actions/checkout` step so CI can resolve the symlink.
+   - Symlinks require Developer Mode or admin rights on Windows; use Option A there.
 2. **Edit `token-costs.config.json`**: set `defaultModel` to what your team actually uses, fix up `models` prices for your providers/discounts, set `billingMode`, and extend `excludePaths` for your generated files.
 3. **Install the git hook** (each developer, once per clone — hooks aren't cloned):
    ```sh
