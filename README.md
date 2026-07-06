@@ -82,7 +82,7 @@ applied **per model** using each model's own prices, where `effective input = in
 
 Prices live in `token-costs.config.json` → `models`. Claude prices were verified against Anthropic's docs in July 2026 (note Sonnet 5 has intro pricing through 2026-08-31); **the OpenAI/Gemini entries are placeholders — verify against the provider's pricing page before relying on them.** Add any model your team uses under `models` — captured usage referencing a model with no price entry shows `+?` in the cost column rather than silently pricing it wrong.
 
-**Subscription plans** (Claude Pro/Max, ChatGPT Plus, etc.): set `billingMode` to `"subscription"` and optionally `subscriptionPlanName`. Tokens are still tracked (useful for plan-limit awareness) but cost is reported as the plan rather than a dollar figure, since marginal cost is $0.
+**Subscription plans** (Claude Pro/Max, ChatGPT Plus, etc.): set `billingMode` to `"subscription"` and optionally `subscriptionPlanName`. Costs are still computed and shown in dollars at API rates — the **API-equivalent** of the usage, useful for comparing features and knowing what the plan is saving you — with a note that actual billing is the flat-rate plan (marginal cost $0).
 
 Not modelled: batch-API discounts (50%), 1-hour-TTL cache writes (2× rather than 1.25×), or per-model intro pricing windows. For estimated commits, if most of your real usage is cache reads the `inputMultiplier` heuristic overstates cost — calibrate it down.
 

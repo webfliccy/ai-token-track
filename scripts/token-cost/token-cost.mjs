@@ -176,9 +176,10 @@ function estimateTokens(commit, cfg) {
 const usageForCommit = (commit, cfg) =>
   parseTrailer(commit, cfg) ?? parseNote(commit) ?? estimateTokens(commit, cfg);
 
-/** Cost of one model's usage; null if the model has no price entry. */
+/** Cost of one model's usage; null if the model has no price entry. Always
+ *  priced at API rates — in subscription mode this is the API-equivalent
+ *  figure (the plan's marginal cost is $0; output labels it accordingly). */
 function costOfModel(model, u, cfg) {
-  if (cfg.billingMode === "subscription") return 0;
   const price = cfg.models[model];
   if (!price) return null;
   const { readMultiplier, writeMultiplier } = cfg.cache;
@@ -367,10 +368,7 @@ function renderTable(rows, cfg, md = false) {
     (a, r) => ({ input: a.input + r.input, output: a.output + r.output, cost: a.cost + r.cost, commits: a.commits + r.commits }),
     { input: 0, output: 0, cost: 0, commits: 0 }
   );
-  const cost = (r) =>
-    cfg.billingMode === "subscription"
-      ? `plan${cfg.subscriptionPlanName ? `:${cfg.subscriptionPlanName}` : ""}`
-      : fmtUsd(r.cost) + (r.unknownModelCost ? "+?" : "");
+  const cost = (r) => fmtUsd(r.cost) + (r.unknownModelCost ? "+?" : "");
   const basis = (r) => (r.exactCommits === r.commits ? "exact" : r.exactCommits > 0 ? "mixed" : "estimate");
   const header = ["Feature", "Commits", "Input tok", "Output tok", "Cost", "Models", "Basis"];
   const body = rows.map((r) => [
@@ -378,23 +376,30 @@ function renderTable(rows, cfg, md = false) {
     [...r.models].map(shortModel).join(", "), basis(r),
   ]);
   body.push(["TOTAL", `${total.commits}`, fmtTok(total.input), fmtTok(total.output),
-    cfg.billingMode === "subscription" ? "plan" : fmtUsd(total.cost), "", ""]);
+    fmtUsd(total.cost), "", ""]);
+  const subNote =
+    cfg.billingMode === "subscription"
+      ? `Costs are API-equivalent; actual billing is a flat-rate subscription${cfg.subscriptionPlanName ? ` (${cfg.subscriptionPlanName})` : ""} — marginal cost $0.`
+      : "";
 
   if (md) {
     const lines = [`| ${header.join(" | ")} |`, `|${header.map(() => "---").join("|")}|`];
     for (const row of body) lines.push(`| ${row.join(" | ")} |`);
+    if (subNote) lines.push("", `_${subNote}_`);
     lines.push("", `_Input tok includes cache reads/writes; cost prices them at ${cfg.cache.readMultiplier}× / ${cfg.cache.writeMultiplier}× input rate. "estimate" rows are diff-size heuristics (model assumed \`${cfg.defaultModel}\`), not measured usage — see docs/token-cost-tracking.md._`);
     return lines.join("\n");
   }
   const widths = header.map((h, i) => Math.max(h.length, ...body.map((r) => r[i].length)));
   const line = (row) => row.map((cell, i) => cell.padEnd(widths[i])).join("  ");
-  return [line(header), line(widths.map((w) => "-".repeat(w))), ...body.map(line)].join("\n");
+  const table = [line(header), line(widths.map((w) => "-".repeat(w))), ...body.map(line)];
+  if (subNote) table.push("", subNote);
+  return table.join("\n");
 }
 
 function printCommitSummary(head, usage, cfg) {
   const parts = Object.entries(usage.models).map(([model, u]) => {
     const cost = costOfModel(model, u, cfg);
-    const costStr = cost === null ? "cost=?" : cfg.billingMode === "subscription" ? "cost=plan" : fmtUsd(cost);
+    const costStr = cost === null ? "cost=?" : fmtUsd(cost) + (cfg.billingMode === "subscription" ? " api-equiv" : "");
     return `${shortModel(model)}: in=${fmtTok(u.input + u.cacheRead + u.cacheWrite)} out=${fmtTok(u.output)} ${costStr}`;
   });
   const keys = featureKeys(head);
@@ -406,7 +411,7 @@ function printCommitSummary(head, usage, cfg) {
     if (f) {
       console.log(
         `[token-cost] ${key} running total: in=${fmtTok(f.input)} out=${fmtTok(f.output)} ` +
-          `cost=${cfg.billingMode === "subscription" ? "plan" : fmtUsd(f.cost)} over ${f.commits} commit(s)`
+          `cost=${fmtUsd(f.cost)}${cfg.billingMode === "subscription" ? " api-equiv" : ""} over ${f.commits} commit(s)`
       );
     }
   }
@@ -427,7 +432,7 @@ if (cmd === "report") {
   const rows = aggregate(readCommits(since ? `${since}..HEAD` : undefined), cfg);
   if (args.includes("--json")) {
     const out = rows.map((r) => ({ ...r, models: [...r.models] }));
-    console.log(JSON.stringify({ defaultModel: cfg.defaultModel, billingMode: cfg.billingMode, features: out }, null, 2));
+    console.log(JSON.stringify({ defaultModel: cfg.defaultModel, billingMode: cfg.billingMode, subscriptionPlanName: cfg.subscriptionPlanName || undefined, features: out }, null, 2));
   } else {
     console.log(renderTable(rows, cfg, args.includes("--md")));
   }
